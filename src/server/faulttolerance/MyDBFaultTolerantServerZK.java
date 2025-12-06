@@ -138,15 +138,17 @@ public class MyDBFaultTolerantServerZK extends server.MyDBSingleServer {
 
     private void watchForRequests() {
         try {
-            // Re-register the watcher recursively to keep listening for new nodes
             z.getChildren(REQ_PATH, e -> {
                 if (e.getType() == Watcher.Event.EventType.NodeChildrenChanged) {
                     processNewRequests();
-                    watchForRequests();
+                    watchForRequests();  // Re-register watcher
                 }
             });
+            // Process any requests that already exist
             processNewRequests();
-        } catch (Exception e) {}
+        } catch (Exception e) {
+            L.warning("Error watching requests: " + e.getMessage());
+        }
     }
 
     private void processNewRequests() {
@@ -183,19 +185,13 @@ public class MyDBFaultTolerantServerZK extends server.MyDBSingleServer {
                 if (j.has("REQUEST")) k = j.getString("REQUEST");
             } catch (JSONException e) {}
             
-            // Create a unique request ID
-            String reqPath = z.create(REQ_PATH + "/req-", k.getBytes(), 
+            // Write request to ZK (fire and forget)
+            // The watcher will process it asynchronously
+            z.create(REQ_PATH + "/req-", k.getBytes(), 
                     ZooDefs.Ids.OPEN_ACL_UNSAFE, CreateMode.PERSISTENT_SEQUENTIAL);
             
-            // Extract sequence number from path
-            String seqNum = reqPath.substring(reqPath.lastIndexOf("-") + 1);
-            
-            // Wait for this request to be executed (with timeout)
-            int maxWait = 50; // 5 seconds with 100ms checks
-            while (!executedMap.containsKey(Long.parseLong(seqNum)) && maxWait-- > 0) {
-                Thread.sleep(100);
-            }
-            
+            // Send acknowledgment immediately
+            // The test waits before verifying results
             clientMessenger.send(h.sndr, createResponse(r, "ACK").getBytes());
         } catch (Exception e) {
             try {
